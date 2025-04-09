@@ -195,6 +195,33 @@ async function getAllUsersByUniqueEmailAndStatusActive() {
     );
 }
 
+//Funcion para obtener todos los registros de la tabla user por su dni unico en la tabla de user y que tengan suscripciones activas en la tabla de user o sin suscripciones activas (q_susc_activas = 0)
+async function getAllUsersByUniqueDniAndStatusActiveOrInactive() {
+    return new Promise((resolve, reject) => {
+        const query = `
+            SELECT * FROM (
+                SELECT *,
+                       ROW_NUMBER() OVER (PARTITION BY email
+                                          ORDER BY CASE 
+                                              WHEN q_susc_activas > 0 THEN 1 
+                                              ELSE 2 
+                                          END, 
+                                          created_on DESC) as rn
+                FROM user
+            ) as ranked_users
+            WHERE rn = 1 AND q_susc_activas >= 0
+        `;
+        db.query(query, (err, results) => {
+            if (err) {
+                console.error('Error fetching data from user table:', err);
+                reject(err);
+            } else {
+                resolve(results);
+            }
+        });
+    });
+}
+
 // Función para encontrar un usuario en la tabla auth0_user por email
 async function findMatchingAuth0User(email) {
     return new Promise((resolve, reject) => {
@@ -226,10 +253,10 @@ async function findMatchingAuth0UserByDni(email, dni) {
                 return reject(err);
             }
 
-            if (resultsByEmail.length > 0) {
-                // Usuario encontrado por email, no continuamos con la búsqueda por DNI
-                return resolve(null);
-            }
+            // if (resultsByEmail.length > 0) {
+            //     // Usuario encontrado por email, no continuamos con la búsqueda por DNI
+            //     return resolve(null);
+            // }
 
             // Si no se encuentra por email, intentar buscar por DNI
             const queryByDNI = 'SELECT * FROM auth0_user WHERE taxvat = ?';
@@ -250,7 +277,7 @@ async function findMatchingAuth0UserByDni(email, dni) {
 }
 
 // Función para actualizar el metadata del usuario en Auth0
-async function updateAuth0UserMetadata(token, userId, suscActivas) {
+async function updateAuth0UserMetadata(token, userId, codArea, telephone2) {
     try {
         await axios.patch(`https://${auth0Domain}/api/v2/users/${userId}`, {
             // user_metadata: {
@@ -263,7 +290,9 @@ async function updateAuth0UserMetadata(token, userId, suscActivas) {
             // }
             //solo actualizar active_subs en el metadata y no los demas campos
             user_metadata: {
-                active_subs: suscActivas
+                // active_subs: suscActivas
+                telephone_area: codArea,
+                telephone_number: telephone2
             }
             
         }, {
@@ -367,7 +396,10 @@ app.get('/users/create-table-users', (req, res) => {
             birth_date VARCHAR(255),
             axx_tipodocumento VARCHAR(50),
             axx_nrodocumento VARCHAR(50),
-            q_susc_activas INT
+            q_susc_activas VARCHAR(50),
+            axx_ani VARCHAR(50),
+            axx_codigodearea VARCHAR(50),
+            Telephone2 VARCHAR(50)
         )
     `;
 
@@ -396,7 +428,10 @@ app.get('/users/create-table-users-filtered', (req, res) => {
             birth_date VARCHAR(255),
             axx_tipodocumento VARCHAR(50),
             axx_nrodocumento VARCHAR(50),
-            q_susc_activas INT
+            q_susc_activas VARCHAR(50),
+            axx_ani VARCHAR(50),
+            axx_codigodearea VARCHAR(50),
+            Telephone2 VARCHAR(50)
         )
     `;
 
@@ -551,10 +586,13 @@ app.post('/users/upload-file', upload.single('file'), async (req, res) => {
                     BirthDate,
                     axx_tipodocumento,
                     axx_nrodocumento,
-                    'Q susc activas': q_susc_activas
+                    'Q susc activas': q_susc_activas,
+                    axx_ani,
+                    axx_codigodearea,
+                    Telephone2
                 } = row;
 
-                const query = 'INSERT INTO user (created_on, contact_id, email, first_name, last_name, gender_code, axx_genero, birth_date, axx_tipodocumento, axx_nrodocumento, q_susc_activas) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)';
+                const query = 'INSERT INTO user (created_on, contact_id, email, first_name, last_name, gender_code, axx_genero, birth_date, axx_tipodocumento, axx_nrodocumento, q_susc_activas, axx_ani, axx_codigodearea, telephone2) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)';
 
                 db.query(query, [
                     CreatedOn || null,
@@ -567,7 +605,10 @@ app.post('/users/upload-file', upload.single('file'), async (req, res) => {
                     BirthDate || null,
                     axx_tipodocumento || null,
                     axx_nrodocumento || null,
-                    q_susc_activas || null
+                    q_susc_activas || null,
+                    axx_ani || null,
+                    axx_codigodearea || null,
+                    Telephone2 || null
                 ], (err, results) => {
                     if (err) {
                         console.error('Error inserting data:', err);
@@ -658,7 +699,7 @@ app.get('/users/search', (req, res) => {
 // Ruta para filtrar y encontrar usuarios en MySQL y Auth0 ya sea por email o DNI y volcarlos en la tabla user_filtered o user_filtered_bydni
 app.get('/users/filter-and-find', async (req, res) => {
     try {
-        const users = await getAllUsersByUniqueEmailAndStatusActive();
+        const users = await getAllUsersByUniqueDniAndStatusActiveOrInactive();
         const filteredResults = [];
 
         for (const user of users) {
@@ -674,11 +715,14 @@ app.get('/users/filter-and-find', async (req, res) => {
         // Guardar en tabla user_filtered y manejar logs
         const logSuccess = [];
         const logError = [];
+        console.log('Filtered results:', filteredResults);
+        
 
+        console.log(`Total filtered users: ${filteredResults.length}`);
         for (const user of filteredResults) {
-            const { created_on, contact_id, email, first_name, last_name, gender_code, axx_genero, birth_date, axx_tipodocumento, axx_nrodocumento, q_susc_activas } = user;
-            const query = 'INSERT INTO user_filtered (created_on, contact_id, email, first_name, last_name, gender_code, axx_genero, birth_date, axx_tipodocumento, axx_nrodocumento, q_susc_activas) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)';
-            // const query = 'INSERT INTO user_filtered_bydni (created_on, contact_id, email, first_name, last_name, gender_code, axx_genero, birth_date, axx_tipodocumento, axx_nrodocumento, q_susc_activas) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)';
+            const { created_on, contact_id, email, first_name, last_name, gender_code, axx_genero, birth_date, axx_tipodocumento, axx_nrodocumento, q_susc_activas, axx_ani, axx_codigodearea, Telephone2 } = user;
+            const query = 'INSERT INTO user_filtered (created_on, contact_id, email, first_name, last_name, gender_code, axx_genero, birth_date, axx_tipodocumento, axx_nrodocumento, q_susc_activas, axx_ani, axx_codigodearea, Telephone2) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)';
+            // const query = 'INSERT INTO user_filtered_bydni (created_on, contact_id, email, first_name, last_name, gender_code, axx_genero, birth_date, axx_tipodocumento, axx_nrodocumento, q_susc_activas, axx_ani, axx_codigodearea, Telephone2) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)';
 
             try {
                 await new Promise((resolve, reject) => {
@@ -693,7 +737,10 @@ app.get('/users/filter-and-find', async (req, res) => {
                         birth_date || null,
                         axx_tipodocumento || null,
                         axx_nrodocumento || null,
-                        q_susc_activas || 0
+                        q_susc_activas || 0,
+                        axx_ani || null,
+                        axx_codigodearea || null,
+                        Telephone2 || null
                     ], (err, results) => {
                         if (err) {
                             logError.push(`Error inserting data: ${email} with ContactId: ${contact_id} and DNI: ${axx_nrodocumento}`);
@@ -775,16 +822,18 @@ app.get('/users/update-metadata', async (req, res) => {
                     // const firstName = row.first_name;
                     // const lastName = row.last_name;
                     // const birthDate = row.birth_date;
-                    // const axxNrodocumento = row.axx_nrodocumento;
-                    const suscActivas = row.q_susc_activas;
+                    const axxNrodocumento = row.axx_nrodocumento;
+                    // const suscActivas = row.q_susc_activas;
+                    const codArea = row.axx_codigodearea;
+                    const telephone2 = row.Telephone2;
                     // Intentar primero buscar por email
                     let auth0User = await getAuth0UserByEmail(token, email?.toLowerCase());
 
                     // Si no encuentra por email, buscar por DNI
-                    // if (!auth0User) {
-                    // console.log(`No user found with email: ${email}. Trying with DNI: ${axxNrodocumento}`);
-                    // auth0User = await getAuth0UserByDNI(token, axxNrodocumento);
-                    // }
+                    if (!auth0User) {
+                    console.log(`No user found with email: ${email}. Trying with DNI: ${axxNrodocumento}`);
+                    auth0User = await getAuth0UserByDNI(token, axxNrodocumento);
+                    }
                     console.log ('Auth0 user by email updated:', auth0User);
                     // console.log('Auth0 user by dni updated:', auth0User[0].user_id);
                     if (auth0User) {
@@ -796,7 +845,9 @@ app.get('/users/update-metadata', async (req, res) => {
                             // lastName,
                             // birthDate,
                             // axxNrodocumento,
-                            suscActivas
+                            // suscActivas
+                            codArea,
+                            telephone2
                         );
                         count++;
                         logSuccess.push(`User metadata updated for Auth0 user by EMAIL OR DNI: ${auth0User.user_id} (${count})`);
