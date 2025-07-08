@@ -65,7 +65,7 @@ async function getAuth0Token() {
             audience: auth0Audience,
             grant_type: 'client_credentials'
         });
-        console.log('Auth0 token:', response.data.access_token);
+        // console.log('Auth0 token:', response.data.access_token);
         return response.data.access_token;
     } catch (error) {
         console.error('Error getting Auth0 token:', error);
@@ -104,7 +104,7 @@ async function getAuth0UserByEmail(token, email) {
                 email: email
             }
         });
-        console.log('Auth0 user by email:', response.data[0]);
+        // console.log('Auth0 user by email:', response.data[0]);
         return response.data[0]; // Retorna el primer usuario encontrado
     } catch (error) {
         console.error('Error getting Auth0 user by email:', error);
@@ -277,7 +277,7 @@ async function findMatchingAuth0UserByDni(email, dni) {
 }
 
 // Función para actualizar el metadata del usuario en Auth0
-async function updateAuth0UserMetadata(token, userId, codArea, telephone2) {
+async function updateAuth0UserMetadata(token, userId, suscActivas, codArea, telephone2) {
     try {
         await axios.patch(`https://${auth0Domain}/api/v2/users/${userId}`, {
             // user_metadata: {
@@ -290,7 +290,7 @@ async function updateAuth0UserMetadata(token, userId, codArea, telephone2) {
             // }
             //solo actualizar active_subs en el metadata y no los demas campos
             user_metadata: {
-                // active_subs: suscActivas
+                active_subs: suscActivas,
                 telephone_area: codArea,
                 telephone_number: telephone2
             }
@@ -806,7 +806,7 @@ app.get('/users/update-metadata', async (req, res) => {
     const logError = [];
 
     try {
-        const query = 'SELECT * FROM user_filtered LIMIT ? OFFSET ?';
+        const query = 'SELECT * FROM user LIMIT ? OFFSET ?';
         db.query(query, [limitParam, offset], async (err, results) => {
             if (err) {
                 console.error('Error reading data from MySQL:', err);
@@ -823,20 +823,20 @@ app.get('/users/update-metadata', async (req, res) => {
                     // const lastName = row.last_name;
                     // const birthDate = row.birth_date;
                     const axxNrodocumento = row.axx_nrodocumento;
-                    // const suscActivas = row.q_susc_activas;
+                    const suscActivas = row.q_susc_activas;
                     const codArea = row.axx_codigodearea;
                     const telephone2 = row.Telephone2;
                     // Intentar primero buscar por email
                     let auth0User = await getAuth0UserByEmail(token, email?.toLowerCase());
-
+console.log('AUTH0 USER BY EMAIL:', auth0User);
                     // Si no encuentra por email, buscar por DNI
-                    if (!auth0User) {
+                    if (!auth0User.user_id) {
                     console.log(`No user found with email: ${email}. Trying with DNI: ${axxNrodocumento}`);
                     auth0User = await getAuth0UserByDNI(token, axxNrodocumento);
                     }
-                    console.log ('Auth0 user by email updated:', auth0User);
+                    console.log('AUTH0 USER BY DNI:', auth0User);
                     // console.log('Auth0 user by dni updated:', auth0User[0].user_id);
-                    if (auth0User) {
+                    if (auth0User.user_id) {
                         await updateAuth0UserMetadata(
                             token,
                             auth0User.user_id,
@@ -845,13 +845,13 @@ app.get('/users/update-metadata', async (req, res) => {
                             // lastName,
                             // birthDate,
                             // axxNrodocumento,
-                            // suscActivas
+                            suscActivas,
                             codArea,
                             telephone2
                         );
                         count++;
-                        logSuccess.push(`User metadata updated for Auth0 user by EMAIL OR DNI: ${auth0User.user_id} (${count})`);
-                        console.log(`User metadata updated for Auth0 user: ${auth0User.user_id} (${count})`);
+                        logSuccess.push(`User metadata updated for Auth0 user by EMAIL OR DNI: ${auth0User.user_id} susc (${suscActivas}) (${count})`);
+                        console.log(`User metadata updated for Auth0 user: ${auth0User.user_id} susc (${suscActivas}) (${count})`);
                     }
 
                     return { email, auth0User };
